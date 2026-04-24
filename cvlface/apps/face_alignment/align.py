@@ -1,4 +1,7 @@
+# RAFDB folder: /home/lh/new_disk/luhao/data/RAF/basic/Image/aligned
+
 import pyrootutils
+
 root = pyrootutils.setup_root(
     search_from=__file__,
     indicator=["__root__.txt"],
