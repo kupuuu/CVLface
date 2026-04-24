@@ -37,21 +37,26 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--aligner_id', type=str, default='minchul/cvlface_DFA_mobilenet')
-    parser.add_argument('--data_root', type=str, default='./example/images')
+    parser.add_argument('--data_root', type=str, default='/home/lh/new_disk/luhao/data/RAF/basic/Image/original/')
     parser.add_argument('--save_root', type=str, default='./example/aligned_images')
+    parser.add_argument('--max_images', type=int, default=10,
+                        help='Maximum number of images to process. Use -1 to process all images.')
     args = parser.parse_args()
 
     # load model
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    hf_token = os.getenv('HF_TOKEN', None)
     aligner = load_model_by_repo_id(repo_id=args.aligner_id,
                                     save_path=os.path.expanduser(f'~/.cvlface_cache/{args.aligner_id}'),
-                                    HF_TOKEN=os.environ['HF_TOKEN'], ).to(device)
+                                    HF_TOKEN=hf_token, ).to(device)
 
-    all_image_paths = get_all_files(args.data_root, extension_list=['.jpg', '.png'])
+    all_image_paths = sorted(get_all_files(args.data_root, extension_list=['.jpg', '.png']))
+    if args.max_images > 0:
+        all_image_paths = all_image_paths[:args.max_images]
 
     for i, path in enumerate(all_image_paths):
 
-        img1 = Image.open(path)
+        img1 = Image.open(path).convert('RGB')
         input1 = pil_to_input(img1, device)
 
         # align
