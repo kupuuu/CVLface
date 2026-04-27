@@ -166,6 +166,8 @@ if __name__ == '__main__':
                         help='template: keep original 5-point template position, center: move nose to image center.')
     parser.add_argument('--ldmks_coord_type', type=str, default='pixel', choices=['pixel', 'normalized'],
                         help='Coordinate type to save in txt.')
+    parser.add_argument('--ldmks_txt_root', type=str, default='',
+                        help='Root folder to store landmarks txt files. Default: <save_root>/ldmks_txt')
     args = parser.parse_args()
 
     # load model
@@ -177,6 +179,10 @@ if __name__ == '__main__':
 
     data_root = os.path.abspath(args.data_root)
     save_root = os.path.abspath(args.save_root)
+    if args.ldmks_txt_root:
+        ldmks_txt_root = os.path.abspath(args.ldmks_txt_root)
+    else:
+        ldmks_txt_root = os.path.join(save_root, 'ldmks_txt')
 
     all_image_paths = sorted(get_all_files(data_root, extension_list=['.jpg', '.png']))
     if args.max_images > 0:
@@ -208,5 +214,7 @@ if __name__ == '__main__':
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         vis1.save(save_path)
         vis2.save(os.path.splitext(save_path)[0] + '_ldmks.png')
-        txt_path = os.path.splitext(save_path)[0] + '_ldmks.txt'
+        txt_rel_path = os.path.splitext(rel_path)[0] + '_ldmks.txt'
+        txt_path = os.path.join(ldmks_txt_root, txt_rel_path)
+        os.makedirs(os.path.dirname(txt_path), exist_ok=True)
         save_ldmks_txt(txt_path, draw_ldmks, vis1.size[::-1], coord_type=args.ldmks_coord_type)
