@@ -19,6 +19,7 @@ np.float = np.float_
 import argparse
 from general_utils.huggingface_model_utils import load_model_by_repo_id
 from general_utils.img_utils import visualize
+from general_utils.img_utils import draw_ldmk
 from general_utils.img_utils import prepare_text_img
 from torchvision.transforms import Compose, ToTensor, Normalize
 from PIL import Image
@@ -33,14 +34,70 @@ def pil_to_input(pil_image, device='cuda'):
     return input
 
 
+def deblack_border(pil_image, black_threshold=3):
+    """Fill black edge bands by replicating nearest valid border pixels."""
+    img = np.array(pil_image).copy()
+    if img.ndim != 3 or img.shape[2] != 3:
+        return pil_image
+
+    mask = np.all(img <= black_threshold, axis=2)
+    if not mask.any():
+        return pil_image
+
+    h, w = mask.shape
+
+    # Horizontal pass: fill left/right black runs in each row.
+    for y in range(h):
+        non_black = np.flatnonzero(~mask[y])
+        if non_black.size == 0:
+            continue
+        left, right = int(non_black[0]), int(non_black[-1])
+        if left > 0:
+            img[y, :left] = img[y, left]
+        if right < w - 1:
+            img[y, right + 1:] = img[y, right]
+
+    mask = np.all(img <= black_threshold, axis=2)
+
+    # Vertical pass: fill top/bottom black runs in each column.
+    for x in range(w):
+        non_black = np.flatnonzero(~mask[:, x])
+        if non_black.size == 0:
+            continue
+        top, bottom = int(non_black[0]), int(non_black[-1])
+        if top > 0:
+            img[:top, x] = img[top, x]
+        if bottom < h - 1:
+            img[bottom + 1:, x] = img[bottom, x]
+
+    return Image.fromarray(img.astype(np.uint8))
+
+
+def draw_aligned_ldmks_on_pil(pil_image, aligned_ldmks):
+    """Draw normalized 5-point landmarks on one aligned PIL image."""
+    if aligned_ldmks is None:
+        return pil_image
+    arr = np.array(pil_image).copy()
+    if isinstance(aligned_ldmks, torch.Tensor):
+        ldmk = aligned_ldmks[0].detach().cpu().numpy().reshape(-1)
+    else:
+        ldmk = np.asarray(aligned_ldmks[0]).reshape(-1)
+    arr = draw_ldmk(arr, ldmk)
+    return Image.fromarray(arr.astype(np.uint8))
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--aligner_id', type=str, default='minchul/cvlface_DFA_mobilenet')
-    parser.add_argument('--data_root', type=str, default='/home/lh/new_disk/luhao/data/RAF/basic/Image/original/')
+    parser.add_argument('--data_root', type=str, default='/home/lh/new_disk/luhao/data/RAF/basic/Image/aligned/')
     parser.add_argument('--save_root', type=str, default='./example/aligned_images')
     parser.add_argument('--max_images', type=int, default=10,
                         help='Maximum number of images to process. Use -1 to process all images.')
+    parser.add_argument('--deblack_method', type=str, default='none', choices=['none', 'border'],
+                        help='Method to remove black edges after alignment.')
+    parser.add_argument('--black_threshold', type=int, default=3,
+                        help='Pixel threshold for black edge detection (0-255).')
     args = parser.parse_args()
 
     # load model
@@ -50,7 +107,10 @@ if __name__ == '__main__':
                                     save_path=os.path.expanduser(f'~/.cvlface_cache/{args.aligner_id}'),
                                     HF_TOKEN=hf_token, ).to(device)
 
-    all_image_paths = sorted(get_all_files(args.data_root, extension_list=['.jpg', '.png']))
+    data_root = os.path.abspath(args.data_root)
+    save_root = os.path.abspath(args.save_root)
+
+    all_image_paths = sorted(get_all_files(data_root, extension_list=['.jpg', '.png']))
     if args.max_images > 0:
         all_image_paths = all_image_paths[:args.max_images]
 
@@ -64,8 +124,14 @@ if __name__ == '__main__':
 
         # save aligned images
         vis1 = visualize(aligned_x1.cpu().clone())
-        vis2 = visualize(aligned_x1.cpu().clone(), aligned_ldmks1.cpu())
-        save_path = path.replace(args.data_root, args.save_root)
+        if args.deblack_method == 'border':
+            vis1 = deblack_border(vis1, black_threshold=args.black_threshold)
+
+        # Draw landmarks after any post-process to keep point locations visually consistent.
+        vis2 = draw_aligned_ldmks_on_pil(vis1, aligned_ldmks1)
+
+        rel_path = os.path.relpath(path, data_root)
+        save_path = os.path.join(save_root, rel_path)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         vis1.save(save_path)
         vis2.save(os.path.splitext(save_path)[0] + '_ldmks.png')

@@ -26,10 +26,21 @@ def load_model_from_local_path(path, HF_TOKEN=None):
     cwd = os.getcwd()
     os.chdir(path)
     sys.path.insert(0, path)
-    model = AutoModel.from_pretrained(path, trust_remote_code=True, token=HF_TOKEN)
-    os.chdir(cwd)
-    sys.path.pop(0)
-    return model
+    try:
+        model = AutoModel.from_pretrained(path, trust_remote_code=True, token=HF_TOKEN)
+        return model
+    except ImportError as e:
+        msg = str(e)
+        if 'omegaconf' in msg and 'aligners' in msg:
+            raise ImportError(
+                'Missing dependency: omegaconf. '\
+                'Please run `pip install omegaconf`. '\
+                f'The `aligners` package in this message refers to local model code under: {path}/aligners'
+            ) from e
+        raise
+    finally:
+        os.chdir(cwd)
+        sys.path.pop(0)
 
 
 # helpfer function to download huggingface repo and use model
