@@ -73,66 +73,6 @@ def deblack_border(pil_image, black_threshold=3):
     return Image.fromarray(img.astype(np.uint8))
 
 
-def translate_pil_image(pil_image, shift_x, shift_y, fill_value=0):
-    """Translate PIL image by integer pixels and fill uncovered regions."""
-    arr = np.array(pil_image)
-    out = np.full_like(arr, fill_value)
-    h, w = arr.shape[:2]
-
-    if abs(shift_x) >= w or abs(shift_y) >= h:
-        return Image.fromarray(out.astype(np.uint8))
-
-    if shift_x >= 0:
-        src_x0, src_x1 = 0, w - shift_x
-        dst_x0, dst_x1 = shift_x, w
-    else:
-        src_x0, src_x1 = -shift_x, w
-        dst_x0, dst_x1 = 0, w + shift_x
-
-    if shift_y >= 0:
-        src_y0, src_y1 = 0, h - shift_y
-        dst_y0, dst_y1 = shift_y, h
-    else:
-        src_y0, src_y1 = -shift_y, h
-        dst_y0, dst_y1 = 0, h + shift_y
-
-    out[dst_y0:dst_y1, dst_x0:dst_x1] = arr[src_y0:src_y1, src_x0:src_x1]
-    return Image.fromarray(out.astype(np.uint8))
-
-
-def center_nose_on_image(pil_image, aligned_ldmks, nose_index=2):
-    """Translate aligned image so the nose landmark is at image center."""
-    if aligned_ldmks is None:
-        return pil_image, aligned_ldmks
-
-    w, h = pil_image.size
-    if isinstance(aligned_ldmks, torch.Tensor):
-        centered_ldmks = aligned_ldmks.clone()
-        nose_xy = centered_ldmks[0, nose_index].detach().cpu().numpy()
-    else:
-        centered_ldmks = np.array(aligned_ldmks, copy=True)
-        nose_xy = centered_ldmks[0, nose_index]
-
-    shift_x = int(np.round((0.5 - float(nose_xy[0])) * w))
-    shift_y = int(np.round((0.5 - float(nose_xy[1])) * h))
-
-    if shift_x == 0 and shift_y == 0:
-        return pil_image, centered_ldmks
-
-    centered_img = translate_pil_image(pil_image, shift_x=shift_x, shift_y=shift_y, fill_value=0)
-
-    dx = shift_x / float(w)
-    dy = shift_y / float(h)
-    centered_ldmks[..., 0] = centered_ldmks[..., 0] + dx
-    centered_ldmks[..., 1] = centered_ldmks[..., 1] + dy
-    if isinstance(centered_ldmks, torch.Tensor):
-        centered_ldmks = centered_ldmks.clamp(0.0, 1.0)
-    else:
-        centered_ldmks = np.clip(centered_ldmks, 0.0, 1.0)
-
-    return centered_img, centered_ldmks
-
-
 def draw_aligned_ldmks_on_pil(pil_image, aligned_ldmks):
     """Draw normalized 5-point landmarks on one aligned PIL image."""
     if aligned_ldmks is None:
@@ -158,11 +98,6 @@ if __name__ == '__main__':
                         help='Method to remove black edges after alignment.')
     parser.add_argument('--black_threshold', type=int, default=3,
                         help='Pixel threshold for black edge detection (0-255).')
-    parser.add_argument('--nose_center', action='store_true',
-                        help='Force nose landmark to image center by translation.')
-    parser.add_argument('--no_nose_center', dest='nose_center', action='store_false',
-                        help='Disable nose centering translation.')
-    parser.set_defaults(nose_center=True)
     args = parser.parse_args()
 
     # load model
@@ -189,10 +124,6 @@ if __name__ == '__main__':
 
         # save aligned images
         vis1 = visualize(aligned_x1.cpu().clone())
-
-        if args.nose_center:
-            vis1, aligned_ldmks1 = center_nose_on_image(vis1, aligned_ldmks1)
-
         if args.deblack_method == 'border':
             vis1 = deblack_border(vis1, black_threshold=args.black_threshold)
 
