@@ -126,6 +126,30 @@ def center_nose_on_image(pil_image, aligned_ldmks):
     return Image.fromarray(shifted.astype(np.uint8)), ldmks
 
 
+def save_ldmks_txt(txt_path, aligned_ldmks, image_size, coord_type='pixel'):
+    """Save 5-point landmarks to text file in fixed order:
+    left_eye, right_eye, nose, left_mouth, right_mouth.
+    """
+    if aligned_ldmks is None:
+        return
+
+    if isinstance(aligned_ldmks, torch.Tensor):
+        points = aligned_ldmks[0].detach().cpu().numpy()
+    else:
+        points = np.asarray(aligned_ldmks[0])
+
+    points = points.reshape(5, 2).astype(np.float32)
+    h, w = image_size
+
+    if coord_type == 'pixel':
+        points[:, 0] = points[:, 0] * w
+        points[:, 1] = points[:, 1] * h
+
+    with open(txt_path, 'w') as f:
+        for x, y in points:
+            f.write(f'{x:.6f} {y:.6f}\n')
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='')
@@ -140,6 +164,8 @@ if __name__ == '__main__':
                         help='Pixel threshold for black edge detection (0-255).')
     parser.add_argument('--nose_position_mode', type=str, default='center', choices=['template', 'center'],
                         help='template: keep original 5-point template position, center: move nose to image center.')
+    parser.add_argument('--ldmks_coord_type', type=str, default='pixel', choices=['pixel', 'normalized'],
+                        help='Coordinate type to save in txt.')
     args = parser.parse_args()
 
     # load model
@@ -182,3 +208,5 @@ if __name__ == '__main__':
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         vis1.save(save_path)
         vis2.save(os.path.splitext(save_path)[0] + '_ldmks.png')
+        txt_path = os.path.splitext(save_path)[0] + '_ldmks.txt'
+        save_ldmks_txt(txt_path, draw_ldmks, vis1.size[::-1], coord_type=args.ldmks_coord_type)
