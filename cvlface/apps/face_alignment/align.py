@@ -9,6 +9,7 @@ root = pyrootutils.setup_root(
     dotenv=True,
 )
 import os, sys
+import cv2
 
 sys.path.append(os.path.join(root))
 import numpy as np
@@ -86,6 +87,45 @@ def draw_aligned_ldmks_on_pil(pil_image, aligned_ldmks):
     return Image.fromarray(arr.astype(np.uint8))
 
 
+def center_nose_on_image(pil_image, aligned_ldmks):
+    """Shift aligned image so nose landmark (index 2) is at image center."""
+    if aligned_ldmks is None:
+        return pil_image, aligned_ldmks
+
+    img = np.array(pil_image)
+    h, w = img.shape[:2]
+
+    if isinstance(aligned_ldmks, torch.Tensor):
+        ldmks = aligned_ldmks.detach().cpu().clone()
+        nose = ldmks[0, 2]
+    else:
+        ldmks = np.asarray(aligned_ldmks).copy()
+        nose = ldmks[0, 2]
+
+    nose_x = float(nose[0] * w)
+    nose_y = float(nose[1] * h)
+    target_x = w * 0.5
+    target_y = h * 0.5
+
+    dx = int(round(target_x - nose_x))
+    dy = int(round(target_y - nose_y))
+
+    if dx == 0 and dy == 0:
+        return pil_image, aligned_ldmks
+
+    M = np.array([[1, 0, dx], [0, 1, dy]], dtype=np.float32)
+    shifted = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+    if isinstance(ldmks, torch.Tensor):
+        ldmks[..., 0] = torch.clamp(ldmks[..., 0] + (dx / float(w)), 0.0, 1.0)
+        ldmks[..., 1] = torch.clamp(ldmks[..., 1] + (dy / float(h)), 0.0, 1.0)
+    else:
+        ldmks[..., 0] = np.clip(ldmks[..., 0] + (dx / float(w)), 0.0, 1.0)
+        ldmks[..., 1] = np.clip(ldmks[..., 1] + (dy / float(h)), 0.0, 1.0)
+
+    return Image.fromarray(shifted.astype(np.uint8)), ldmks
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='')
@@ -98,6 +138,8 @@ if __name__ == '__main__':
                         help='Method to remove black edges after alignment.')
     parser.add_argument('--black_threshold', type=int, default=3,
                         help='Pixel threshold for black edge detection (0-255).')
+    parser.add_argument('--nose_position_mode', type=str, default='center', choices=['template', 'center'],
+                        help='template: keep original 5-point template position, center: move nose to image center.')
     args = parser.parse_args()
 
     # load model
@@ -124,11 +166,16 @@ if __name__ == '__main__':
 
         # save aligned images
         vis1 = visualize(aligned_x1.cpu().clone())
+
+        draw_ldmks = aligned_ldmks1
+        if args.nose_position_mode == 'center':
+            vis1, draw_ldmks = center_nose_on_image(vis1, aligned_ldmks1)
+
         if args.deblack_method == 'border':
             vis1 = deblack_border(vis1, black_threshold=args.black_threshold)
 
         # Draw landmarks after any post-process to keep point locations visually consistent.
-        vis2 = draw_aligned_ldmks_on_pil(vis1, aligned_ldmks1)
+        vis2 = draw_aligned_ldmks_on_pil(vis1, draw_ldmks)
 
         rel_path = os.path.relpath(path, data_root)
         save_path = os.path.join(save_root, rel_path)
