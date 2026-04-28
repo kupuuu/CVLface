@@ -150,6 +150,58 @@ def save_ldmks_txt(txt_path, aligned_ldmks, image_size, coord_type='pixel'):
             f.write(f'{x:.6f} {y:.6f}\n')
 
 
+def crop_center_and_adjust(pil_image, aligned_ldmks, crop_size=90):
+    """Center-crop (or pad then crop) a PIL image to square crop_size and adjust normalized landmarks.
+    Returns (cropped_image, adjusted_aligned_ldmks)
+    """
+    if crop_size is None or crop_size <= 0:
+        return pil_image, aligned_ldmks
+
+    arr = np.array(pil_image)
+    h0, w0 = arr.shape[:2]
+    target = int(crop_size)
+
+    pad_top = pad_bottom = pad_left = pad_right = 0
+    if w0 < target or h0 < target:
+        pad_left = max(0, (target - w0) // 2)
+        pad_right = max(0, target - w0 - pad_left)
+        pad_top = max(0, (target - h0) // 2)
+        pad_bottom = max(0, target - h0 - pad_top)
+        arr = cv2.copyMakeBorder(arr, pad_top, pad_bottom, pad_left, pad_right, borderType=cv2.BORDER_REPLICATE)
+
+    h, w = arr.shape[:2]
+    left = (w - target) // 2
+    top = (h - target) // 2
+    right = left + target
+    bottom = top + target
+
+    pil_padded = Image.fromarray(arr.astype(np.uint8))
+    cropped = pil_padded.crop((left, top, right, bottom))
+
+    if aligned_ldmks is None:
+        return cropped, None
+
+    # adjust normalized landmarks to new cropped image
+    if isinstance(aligned_ldmks, torch.Tensor):
+        ldmks = aligned_ldmks.detach().cpu().clone()
+        # convert normalized -> pixel on padded image
+        ldmks[..., 0] = ldmks[..., 0] * float(w) - float(left)
+        ldmks[..., 1] = ldmks[..., 1] * float(h) - float(top)
+        # to normalized on cropped
+        ldmks[..., 0] = ldmks[..., 0] / float(target)
+        ldmks[..., 1] = ldmks[..., 1] / float(target)
+        ldmks[..., 0] = torch.clamp(ldmks[..., 0], 0.0, 1.0)
+        ldmks[..., 1] = torch.clamp(ldmks[..., 1], 0.0, 1.0)
+    else:
+        ldmks = np.asarray(aligned_ldmks).copy()
+        ldmks[..., 0] = ldmks[..., 0] * float(w) - float(left)
+        ldmks[..., 1] = ldmks[..., 1] * float(h) - float(top)
+        ldmks[..., 0] = np.clip(ldmks[..., 0] / float(target), 0.0, 1.0)
+        ldmks[..., 1] = np.clip(ldmks[..., 1] / float(target), 0.0, 1.0)
+
+    return cropped, ldmks
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='')
@@ -168,6 +220,8 @@ if __name__ == '__main__':
                         help='Coordinate type to save in txt.')
     parser.add_argument('--ldmks_txt_root', type=str, default='',
                         help='Root folder to store landmarks txt files. Default: <save_root>/ldmks_txt')
+    parser.add_argument('--crop_size', type=int, default=90,
+                        help='If >0, center-crop (or pad then crop) aligned images to this size.')
     args = parser.parse_args()
 
     # load model
@@ -206,7 +260,11 @@ if __name__ == '__main__':
         if args.deblack_method == 'border':
             vis1 = deblack_border(vis1, black_threshold=args.black_threshold)
 
-        # Draw landmarks after any post-process to keep point locations visually consistent.
+        # Crop (or pad then crop) to fixed size and adjust landmarks accordingly
+        if args.crop_size and args.crop_size > 0:
+            vis1, draw_ldmks = crop_center_and_adjust(vis1, draw_ldmks, crop_size=args.crop_size)
+
+        # Draw landmarks after any post-process (including crop) to keep point locations visually consistent.
         vis2 = draw_aligned_ldmks_on_pil(vis1, draw_ldmks)
 
         rel_path = os.path.relpath(path, data_root)
